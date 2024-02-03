@@ -2,7 +2,6 @@ import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import Joy
 import pygame
-import time
 from math import fabs
 
 DEAD_ZONE = 0.1
@@ -11,83 +10,102 @@ class JoystickNode(Node):
     def __init__(self):
         super().__init__('joy_node')
         self.publisher_ = self.create_publisher(Joy, '/joy', 10)
+        self.init_joystick()
+        self.target_id = 0
+        self.get_logger().info("joy node is running...")
 
+    def init_joystick(self):
         pygame.init()
         pygame.joystick.init()
 
-        num_joysticks = pygame.joystick.get_count()
+    def play(self):
+        joysticks = {}
+        done = False
 
-        print("Searching for Joystick")
-        while not num_joysticks:
-            time.sleep(1)  # Wait for 1 second before checking again
-            num_joysticks = pygame.joystick.get_count()
+        while not done:
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    done = True  # Flag that we are done so we exit this loop.
 
-        self.joystick = pygame.joystick.Joystick(0)
-        self.joystick.init()
+                # Handle hotplugging
+                if event.type == pygame.JOYDEVICEADDED:
+                    # This event will be generated when the program starts for every
+                    # joystick, filling up the list without needing to create them manually.
+                    joy = pygame.joystick.Joystick(event.device_index)
+                    id = joy.get_instance_id()
+                    joysticks[id] = joy
+                    self.get_logger().info(f"Joystick {id} connected")
 
-        name = self.joystick.get_name()
-        id = self.joystick.get_id()
-        guid = self.joystick.get_guid()
-        power_level = self.joystick.get_power_level()
-        self.get_logger().info(f"Connected to {name}")
-        self.get_logger().info(f"ID: {id}")
-        self.get_logger().info(f"Guid: {guid}")
-        self.get_logger().info(f"Power Level: {power_level}")
-        self.get_logger().info(f"Dead Zone: {DEAD_ZONE}")
+                    if id == self.target_id:
+                        self.joystick = joy
+                        self.get_logger().info("Started Publishing Joystick Message")
 
-        self.timer = self.create_timer(0.05, self.parse_and_publish_data)
+                if event.type == pygame.JOYDEVICEREMOVED:
+                    id = event.instance_id
+                    del joysticks[id]
+                    self.get_logger().info(f"Joystick {id} disconnected")
 
-    def parse_and_publish_data(self):
-        try:
-            joy_msg = Joy()
-            pygame.event.pump()
-            joy_msg.header.stamp = self.get_clock().now().to_msg()
+                    if id == self.target_id:
+                        self.target_id += 1
+                        self.get_logger().info("Stopped Publishing Joystick Message")
 
-            # Map buttons
-            joy_msg.buttons = [
-                self.joystick.get_button(0),  # Cross Button
-                self.joystick.get_button(1),  # Circle Button
-                self.joystick.get_button(2),  # Square Button
-                self.joystick.get_button(3),  # Triangle Button
-                self.joystick.get_button(4),  # Left Bumper
-                self.joystick.get_button(5),  # Right Bumper
-                self.joystick.get_button(9),  # Option Button
-                self.joystick.get_button(8),  # Share Button
-                self.joystick.get_button(7),  # Start Button
-                self.joystick.get_button(10),  # Power Button
-                self.joystick.get_button(11),  # Button Stick Left
-                self.joystick.get_button(12)  # Button Stick Right
-            ]
+            joystick_count = pygame.joystick.get_count()
+            if joystick_count == 0:
+                continue
+            
+            for joystick in joysticks.values():
+                jid = joystick.get_instance_id()
+                
+                if jid == self.target_id:
+                    try:
+                        joy_msg = Joy()
+                        pygame.event.pump()
+                        joy_msg.header.stamp = self.get_clock().now().to_msg()
 
-            # Map axes
-            joy_msg.axes = [
-                self.joystick.get_axis(0) if fabs(self.joystick.get_axis(0)) > DEAD_ZONE else 0.0,  # Left/Right Axis stick left
-                self.joystick.get_axis(1) if fabs(self.joystick.get_axis(1)) > DEAD_ZONE else 0.0,  # Up/Down Axis stick left
-                self.joystick.get_axis(3) if fabs(self.joystick.get_axis(3)) > DEAD_ZONE else 0.0,  # Left/Right Axis stick right
-                self.joystick.get_axis(4) if fabs(self.joystick.get_axis(4)) > DEAD_ZONE else 0.0,  # Up/Down Axis stick right
-                self.joystick.get_axis(2) if fabs(self.joystick.get_axis(2)) > DEAD_ZONE else 0.0,  # Left Trigger
-                self.joystick.get_axis(5) if fabs(self.joystick.get_axis(5)) > DEAD_ZONE else 0.0,   # Right Trigger
-                float(self.joystick.get_hat(0)[0]),  # Left/Right hat
-                float(self.joystick.get_hat(0)[1])  # Down/Up hat
-            ]
+                        # Map buttons
+                        joy_msg.buttons = [
+                            joystick.get_button(0),  # Cross Button
+                            joystick.get_button(1),  # Circle Button
+                            joystick.get_button(2),  # Square Button
+                            joystick.get_button(3),  # Triangle Button
+                            joystick.get_button(4),  # Left Bumper
+                            joystick.get_button(5),  # Right Bumper
+                            joystick.get_button(9),  # Option Button
+                            joystick.get_button(8),  # Share Button
+                            joystick.get_button(7),  # Start Button
+                            joystick.get_button(10), # Power Button
+                            joystick.get_button(11), # Button Stick Left
+                            joystick.get_button(12)  # Button Stick Right
+                        ]
 
-            power_level = self.joystick.get_power_level()
+                        # Map axes
+                        joy_msg.axes = [
+                            joystick.get_axis(0) if fabs(joystick.get_axis(0)) > DEAD_ZONE else 0.0,  # Left/Right Axis stick left
+                            joystick.get_axis(1) if fabs(joystick.get_axis(1)) > DEAD_ZONE else 0.0,  # Up/Down Axis stick left
+                            joystick.get_axis(3) if fabs(joystick.get_axis(3)) > DEAD_ZONE else 0.0,  # Left/Right Axis stick right
+                            joystick.get_axis(4) if fabs(joystick.get_axis(4)) > DEAD_ZONE else 0.0,  # Up/Down Axis stick right
+                            joystick.get_axis(2) if fabs(joystick.get_axis(2)) > DEAD_ZONE else 0.0,  # Left Trigger
+                            joystick.get_axis(5) if fabs(joystick.get_axis(5)) > DEAD_ZONE else 0.0,  # Right Trigger
+                            float(self.joystick.get_hat(0)[0]),                                       # Left/Right hat
+                            float(self.joystick.get_hat(0)[1])                                        # Down/Up hat
+                        ]
 
-            self.publisher_.publish(joy_msg)
-            # print(joy_msg)
+                        self.publisher_.publish(joy_msg)
 
-        except pygame.error as e:
-            self.get_logger().error(f"Pygame error: {e}")
+                    except pygame.error as e:
+                        self.get_logger().error(f"Pygame error: {e}")
 
+                    except KeyboardInterrupt:
+                        self.get_logger().info("Shutting down...")
+                        pygame.quit()
+                        self.destroy_node()
 
 def main(args=None):
     rclpy.init(args=args)
     joy = JoystickNode()
-    rclpy.spin(joy)
-    joy.destroy_node()
+    joy.play()
     if rclpy.ok():
         rclpy.shutdown()
-    pygame.quit()
 
 if __name__ == '__main__':
     main()
